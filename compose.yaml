@@ -1,0 +1,102 @@
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: busbooking-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?Set MYSQL_ROOT_PASSWORD in .env}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-busbooking}
+      MYSQL_USER: ${MYSQL_USER:-bususer}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?Set MYSQL_PASSWORD in .env}
+    ports:
+      - "3307:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./database/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    networks: [busbooking-network]
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$${MYSQL_ROOT_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  user-service:
+    build: ./services/user-service
+    environment:
+      PORT: 3000
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_NAME: ${MYSQL_DATABASE:-busbooking}
+      DB_USER: ${MYSQL_USER:-bususer}
+      DB_PASSWORD: ${MYSQL_PASSWORD}
+      JWT_SECRET: ${JWT_SECRET}
+    expose: ["3000"]
+    networks: [busbooking-network]
+    depends_on:
+      mysql: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  bus-service:
+    build: ./services/bus-service
+    environment:
+      PORT: 3000
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_NAME: ${MYSQL_DATABASE:-busbooking}
+      DB_USER: ${MYSQL_USER:-bususer}
+      DB_PASSWORD: ${MYSQL_PASSWORD}
+    expose: ["3000"]
+    networks: [busbooking-network]
+    depends_on:
+      mysql: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  booking-service:
+    build: ./services/booking-service
+    environment:
+      PORT: 3000
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_NAME: ${MYSQL_DATABASE:-busbooking}
+      DB_USER: ${MYSQL_USER:-bususer}
+      DB_PASSWORD: ${MYSQL_PASSWORD}
+      JWT_SECRET: ${JWT_SECRET}
+    expose: ["3000"]
+    networks: [busbooking-network]
+    depends_on:
+      mysql: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:1.27-alpine
+    ports: ["80:80"]
+    volumes:
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      user-service: { condition: service_healthy }
+      bus-service: { condition: service_healthy }
+      booking-service: { condition: service_healthy }
+    networks: [busbooking-network]
+    restart: unless-stopped
+
+volumes:
+  mysql_data:
+
+networks:
+  busbooking-network:
+    driver: bridge
