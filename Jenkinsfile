@@ -1,3 +1,4 @@
+
 pipeline {
     agent any
 
@@ -52,6 +53,8 @@ pipeline {
                     npm install --package-lock=false
                     npm test
                     cd ../..
+
+                    echo "All tests completed successfully."
                 '''
             }
         }
@@ -65,6 +68,7 @@ pipeline {
                     docker compose -f compose.yaml config --quiet
 
                     echo "Checking Dockerfiles..."
+
                     for service in user-service bus-service booking-service
                     do
                         test -f "services/$service/Dockerfile"
@@ -73,14 +77,21 @@ pipeline {
                     done
 
                     echo "Checking production Compose..."
+
+                    cat > .env.validation <<EOF
+ECR_REGISTRY=$ECR_REGISTRY
+USER_IMAGE_TAG=$IMAGE_TAG
+BUS_IMAGE_TAG=$IMAGE_TAG
+BOOKING_IMAGE_TAG=$IMAGE_TAG
+GRAFANA_ADMIN_PASSWORD=temporary-validation-password
+EOF
+
                     docker compose \
-                        --env-file <(printf '%s\\n' \
-                            "ECR_REGISTRY=$ECR_REGISTRY" \
-                            "USER_IMAGE_TAG=$IMAGE_TAG" \
-                            "BUS_IMAGE_TAG=$IMAGE_TAG" \
-                            "BOOKING_IMAGE_TAG=$IMAGE_TAG" \
-                            "GRAFANA_ADMIN_PASSWORD=temporary-validation-password") \
-                        -f compose.prod.yaml config --quiet
+                        --env-file .env.validation \
+                        -f compose.prod.yaml \
+                        config --quiet
+
+                    rm -f .env.validation
 
                     echo "Validation completed successfully."
                 '''
@@ -93,16 +104,19 @@ pipeline {
                     set -eu
 
                     echo "Building User Service..."
+
                     docker build \
                         -t busbooking-user-service:$IMAGE_TAG \
                         services/user-service
 
                     echo "Building Bus Service..."
+
                     docker build \
                         -t busbooking-bus-service:$IMAGE_TAG \
                         services/bus-service
 
                     echo "Building Booking Service..."
+
                     docker build \
                         -t busbooking-booking-service:$IMAGE_TAG \
                         services/booking-service
@@ -118,6 +132,7 @@ pipeline {
                     set -eu
 
                     echo "Scanning User Service..."
+
                     trivy image \
                         --exit-code 1 \
                         --severity HIGH,CRITICAL \
@@ -125,6 +140,7 @@ pipeline {
                         busbooking-user-service:$IMAGE_TAG
 
                     echo "Scanning Bus Service..."
+
                     trivy image \
                         --exit-code 1 \
                         --severity HIGH,CRITICAL \
@@ -132,6 +148,7 @@ pipeline {
                         busbooking-bus-service:$IMAGE_TAG
 
                     echo "Scanning Booking Service..."
+
                     trivy image \
                         --exit-code 1 \
                         --severity HIGH,CRITICAL \
@@ -157,33 +174,39 @@ pipeline {
                         --password-stdin "$ECR_REGISTRY"
 
                     echo "Tagging User Service..."
+
                     docker tag \
                         busbooking-user-service:$IMAGE_TAG \
-                        $ECR_REGISTRY/busbooking-user-service:$IMAGE_TAG
+                        "$ECR_REGISTRY/busbooking-user-service:$IMAGE_TAG"
 
                     echo "Tagging Bus Service..."
+
                     docker tag \
                         busbooking-bus-service:$IMAGE_TAG \
-                        $ECR_REGISTRY/busbooking-bus-service:$IMAGE_TAG
+                        "$ECR_REGISTRY/busbooking-bus-service:$IMAGE_TAG"
 
                     echo "Tagging Booking Service..."
+
                     docker tag \
                         busbooking-booking-service:$IMAGE_TAG \
-                        $ECR_REGISTRY/busbooking-booking-service:$IMAGE_TAG
+                        "$ECR_REGISTRY/busbooking-booking-service:$IMAGE_TAG"
 
                     echo "Pushing User Service..."
+
                     docker push \
-                        $ECR_REGISTRY/busbooking-user-service:$IMAGE_TAG
+                        "$ECR_REGISTRY/busbooking-user-service:$IMAGE_TAG"
 
                     echo "Pushing Bus Service..."
+
                     docker push \
-                        $ECR_REGISTRY/busbooking-bus-service:$IMAGE_TAG
+                        "$ECR_REGISTRY/busbooking-bus-service:$IMAGE_TAG"
 
                     echo "Pushing Booking Service..."
-                    docker push \
-                        $ECR_REGISTRY/busbooking-booking-service:$IMAGE_TAG
 
-                    echo "All images pushed to ECR."
+                    docker push \
+                        "$ECR_REGISTRY/busbooking-booking-service:$IMAGE_TAG"
+
+                    echo "All images pushed to ECR successfully."
                 '''
             }
         }
@@ -195,21 +218,26 @@ pipeline {
 
                     echo "Preparing deployment directory..."
 
-                    sudo mkdir -p "$DEPLOY_DIR"
-                    sudo chown -R jenkins:jenkins "$DEPLOY_DIR"
+                    mkdir -p "$DEPLOY_DIR"
 
                     echo "Copying deployment files..."
 
-                    cp compose.prod.yaml "$DEPLOY_DIR/compose.prod.yaml"
+                    cp compose.prod.yaml \
+                        "$DEPLOY_DIR/compose.prod.yaml"
 
                     mkdir -p "$DEPLOY_DIR/nginx"
-                    cp nginx/default.conf "$DEPLOY_DIR/nginx/default.conf"
+
+                    cp nginx/default.conf \
+                        "$DEPLOY_DIR/nginx/default.conf"
 
                     mkdir -p "$DEPLOY_DIR/monitoring"
-                    cp monitoring/prometheus.yml "$DEPLOY_DIR/monitoring/prometheus.yml"
+
+                    cp monitoring/prometheus.yml \
+                        "$DEPLOY_DIR/monitoring/prometheus.yml"
 
                     if [ -d "monitoring/grafana/provisioning" ]; then
                         mkdir -p "$DEPLOY_DIR/monitoring/grafana"
+
                         cp -r monitoring/grafana/provisioning \
                             "$DEPLOY_DIR/monitoring/grafana/"
                     fi
@@ -217,26 +245,39 @@ pipeline {
                     echo "Creating deployment environment..."
 
                     if [ ! -f "$DEPLOY_DIR/.env" ]; then
-                        echo "GRAFANA_ADMIN_PASSWORD=CHANGE_ME" > "$DEPLOY_DIR/.env"
-                        echo "WARNING: Grafana password must be configured in $DEPLOY_DIR/.env"
+                        echo "GRAFANA_ADMIN_PASSWORD=CHANGE_ME" \
+                            > "$DEPLOY_DIR/.env"
+
+                        echo "WARNING: Configure a real Grafana password in $DEPLOY_DIR/.env"
                     fi
 
-                    sed -i "s/^ECR_REGISTRY=.*/ECR_REGISTRY=$ECR_REGISTRY/" "$DEPLOY_DIR/.env" || true
-                    sed -i "s/^USER_IMAGE_TAG=.*/USER_IMAGE_TAG=$IMAGE_TAG/" "$DEPLOY_DIR/.env" || true
-                    sed -i "s/^BUS_IMAGE_TAG=.*/BUS_IMAGE_TAG=$IMAGE_TAG/" "$DEPLOY_DIR/.env" || true
-                    sed -i "s/^BOOKING_IMAGE_TAG=.*/BOOKING_IMAGE_TAG=$IMAGE_TAG/" "$DEPLOY_DIR/.env" || true
+                    sed -i "s/^ECR_REGISTRY=.*/ECR_REGISTRY=$ECR_REGISTRY/" \
+                        "$DEPLOY_DIR/.env" || true
+
+                    sed -i "s/^USER_IMAGE_TAG=.*/USER_IMAGE_TAG=$IMAGE_TAG/" \
+                        "$DEPLOY_DIR/.env" || true
+
+                    sed -i "s/^BUS_IMAGE_TAG=.*/BUS_IMAGE_TAG=$IMAGE_TAG/" \
+                        "$DEPLOY_DIR/.env" || true
+
+                    sed -i "s/^BOOKING_IMAGE_TAG=.*/BOOKING_IMAGE_TAG=$IMAGE_TAG/" \
+                        "$DEPLOY_DIR/.env" || true
 
                     grep -q "^ECR_REGISTRY=" "$DEPLOY_DIR/.env" ||
-                        echo "ECR_REGISTRY=$ECR_REGISTRY" >> "$DEPLOY_DIR/.env"
+                        echo "ECR_REGISTRY=$ECR_REGISTRY" \
+                        >> "$DEPLOY_DIR/.env"
 
                     grep -q "^USER_IMAGE_TAG=" "$DEPLOY_DIR/.env" ||
-                        echo "USER_IMAGE_TAG=$IMAGE_TAG" >> "$DEPLOY_DIR/.env"
+                        echo "USER_IMAGE_TAG=$IMAGE_TAG" \
+                        >> "$DEPLOY_DIR/.env"
 
                     grep -q "^BUS_IMAGE_TAG=" "$DEPLOY_DIR/.env" ||
-                        echo "BUS_IMAGE_TAG=$IMAGE_TAG" >> "$DEPLOY_DIR/.env"
+                        echo "BUS_IMAGE_TAG=$IMAGE_TAG" \
+                        >> "$DEPLOY_DIR/.env"
 
                     grep -q "^BOOKING_IMAGE_TAG=" "$DEPLOY_DIR/.env" ||
-                        echo "BOOKING_IMAGE_TAG=$IMAGE_TAG" >> "$DEPLOY_DIR/.env"
+                        echo "BOOKING_IMAGE_TAG=$IMAGE_TAG" \
+                        >> "$DEPLOY_DIR/.env"
 
                     echo "Logging in to ECR..."
 
@@ -262,7 +303,7 @@ pipeline {
                         -f compose.prod.yaml \
                         up -d
 
-                    echo "Deployment completed."
+                    echo "Deployment completed successfully."
                 '''
             }
         }
@@ -276,7 +317,8 @@ pipeline {
 
                     sleep 15
 
-                    echo "Container status:"
+                    echo "Container status..."
+
                     cd "$DEPLOY_DIR"
 
                     docker compose \
@@ -285,18 +327,21 @@ pipeline {
                         ps
 
                     echo "Checking User Service..."
+
                     curl --fail --retry 10 --retry-delay 5 \
                         http://127.0.0.1/api/users/health
 
                     echo "Checking Bus Service..."
+
                     curl --fail --retry 10 --retry-delay 5 \
                         http://127.0.0.1/api/buses/health
 
                     echo "Checking Booking Service..."
+
                     curl --fail --retry 10 --retry-delay 5 \
                         http://127.0.0.1/api/bookings/health
 
-                    echo "All health checks passed."
+                    echo "All health checks passed successfully."
                 '''
             }
         }
@@ -304,10 +349,6 @@ pipeline {
 
     post {
         always {
-            sh '''
-                docker image prune -f || true
-            '''
-
             echo "BusBooking pipeline completed with status: ${currentBuild.currentResult}"
         }
 
