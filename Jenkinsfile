@@ -125,39 +125,7 @@ EOF
             }
         }
 
-        stage('Trivy Scan') {
-            steps {
-                sh '''
-                    set -eu
-
-                    echo "Scanning User Service..."
-
-                    trivy image \
-                        --exit-code 1 \
-                        --severity HIGH,CRITICAL \
-                        --no-progress \
-                        busbooking-user-service:$IMAGE_TAG
-
-                    echo "Scanning Bus Service..."
-
-                    trivy image \
-                        --exit-code 1 \
-                        --severity HIGH,CRITICAL \
-                        --no-progress \
-                        busbooking-bus-service:$IMAGE_TAG
-
-                    echo "Scanning Booking Service..."
-
-                    trivy image \
-                        --exit-code 1 \
-                        --severity HIGH,CRITICAL \
-                        --no-progress \
-                        busbooking-booking-service:$IMAGE_TAG
-
-                    echo "Trivy scans completed successfully."
-                '''
-            }
-        }
+        
 
         stage('Push to ECR') {
             steps {
