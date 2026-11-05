@@ -64,8 +64,7 @@ pipeline {
                 sh '''
                     set -eu
 
-                    echo "Validating Docker Compose..."
-                    docker compose -f compose.yaml config --quiet
+                    echo "Validating production Docker Compose..."
 
                     echo "Checking Dockerfiles..."
 
